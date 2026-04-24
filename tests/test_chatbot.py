@@ -5,9 +5,12 @@ def test_happy_path_flow() -> None:
     state = ConversationState(user_id="54911223344")
 
     assert "asistente virtual" in next_messages(state, "hola")[0].lower()
-    assert state.step == Step.ASK_FULL_NAME
+    assert state.step == Step.ASK_FIRST_NAME
 
-    next_messages(state, "Juan Perez")
+    next_messages(state, "Juan")
+    assert state.step == Step.ASK_LAST_NAME
+
+    next_messages(state, "Perez")
     assert state.step == Step.ASK_DNI
 
     next_messages(state, "30111222")
@@ -22,12 +25,13 @@ def test_happy_path_flow() -> None:
     replies = next_messages(state, "Necesito autorizar una resonancia.")
     assert state.step == Step.DONE
     assert state.ticket_id is not None
-    assert any("número de gestión" in r.lower() for r in replies)
+    assert any("número de trámite" in r.lower() for r in replies)
 
 
 def test_invalid_dni() -> None:
     state = ConversationState(user_id="x")
     next_messages(state, "hola")
-    next_messages(state, "Nombre Prueba")
+    next_messages(state, "Nombre")
+    next_messages(state, "Apellido")
     replies = next_messages(state, "12")
     assert "no parece válido" in replies[0].lower()

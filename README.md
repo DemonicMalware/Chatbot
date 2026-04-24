@@ -1,107 +1,91 @@
-# Chatbot de WhatsApp para IOMA (Área Personal)
+# Chatbot de WhatsApp para IOMA (Área Personal) con base segura
 
-Proyecto base de **chatbot completo** para atención por WhatsApp usando la API oficial de Meta (WhatsApp Cloud API).
+Backend de chatbot por WhatsApp (Meta Cloud API) con **persistencia cifrada de datos sensibles**, **control de acceso para personal autorizado** y **auditoría de accesos**.
 
-Permite:
-- conectar un número de WhatsApp Business,
-- recibir mensajes de afiliadxs,
-- pedir datos clave (nombre, DNI, nro de afiliado),
-- clasificar el trámite,
-- generar un número de gestión y dejar la conversación lista para seguimiento humano.
+## Qué guarda el sistema
 
-> ⚠️ Este proyecto es una base técnica. Para producción en un organismo público, se recomienda agregar autenticación de operadores, persistencia en base de datos, auditoría, y cumplimiento legal de protección de datos personales.
+Cuando se completa un trámite, se persiste en una base aislada:
+- nombre,
+- apellido,
+- DNI,
+- número de afiliado,
+- número de trámite (`ticket_id`),
+- día/mes/año/hora del evento,
+- detalle y tipo de gestión.
 
-## Flujo conversacional incluido
+## Controles de seguridad implementados
 
-1. Saludo inicial.
-2. Nombre y apellido.
-3. DNI.
-4. Número de afiliado/a.
-5. Tipo de trámite:
-   - Consulta de cobertura
-   - Autorización de práctica
-   - Alta/actualización de datos
-   - Estado de trámite
-   - Otro
-6. Detalle del caso.
-7. Emisión de ticket automático (`IOMA-XXXXXXXX`).
+1. **Cifrado de datos sensibles en reposo** (`cryptography/Fernet`).
+2. **Hash de campos críticos** (DNI/teléfono) para correlación sin exponer texto plano.
+3. **Base de datos separada del estado en memoria** (SQLAlchemy + URL dedicada).
+4. **Control de acceso por API key para endpoints administrativos**.
+5. **Motivo de acceso obligatorio** (`reason`) para consultar casos.
+6. **Auditoría de accesos**: actor, dispositivo, IP, horario, acción, resultado.
+7. **Revisión de seguridad** de eventos sospechosos (accesos fuera de horario y cambio de dispositivo).
+
+> Importante: esto es una base técnica robusta. No equivale por sí sola a certificación ISO. Para cumplimiento formal se requiere proceso organizacional, auditorías y controles documentados.
+
+## Arquitectura
+
+- `POST /webhook`: recibe mensajes de WhatsApp y avanza flujo.
+- `GET /webhook`: verificación de Meta.
+- `GET /admin/cases/{ticket_id}`: consulta de expediente (solo personal autorizado).
+- `GET /admin/security/review`: revisión de seguridad y accesos sospechosos.
 
 ## Requisitos
 
 - Python 3.11+
-- App de Meta Developers con WhatsApp Cloud API habilitada
-- Número de teléfono configurado en WhatsApp Business Platform
-- URL pública HTTPS para webhook (por ejemplo con ngrok, Cloudflare Tunnel, o despliegue en servidor)
+- WhatsApp Cloud API (Meta)
+- URL pública HTTPS para webhook
 
 ## Instalación
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .[dev]
+pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Editar `.env` con tus credenciales reales.
-
 ## Variables de entorno
 
-- `VERIFY_TOKEN`: token que usará Meta para verificar el webhook.
-- `WHATSAPP_ACCESS_TOKEN`: token de acceso permanente o de larga duración.
-- `WHATSAPP_PHONE_NUMBER_ID`: ID del número de WhatsApp en Meta.
-- `GRAPH_API_VERSION`: versión de Graph API (por defecto `v22.0`).
+- `VERIFY_TOKEN`
+- `WHATSAPP_ACCESS_TOKEN`
+- `WHATSAPP_PHONE_NUMBER_ID`
+- `GRAPH_API_VERSION`
+- `DATABASE_URL` (recomendado PostgreSQL aislado en producción)
+- `ENCRYPTION_KEY` (Fernet, idealmente desde KMS/HSM)
+- `ADMIN_API_KEYS` (`actor:key,actor2:key2`)
 
-## Ejecución local
+## Ejecución
 
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
-Endpoints:
-- `GET /health`
-- `GET /webhook` (verificación Meta)
-- `POST /webhook` (recepción de mensajes)
+## Seguridad de acceso administrativo
 
-## Configurar webhook en Meta
+Ejemplo para consultar un trámite:
 
-En tu app de Meta, en WhatsApp > Configuration:
+```bash
+curl "http://localhost:8000/admin/cases/IOMA-12345678?reason=auditoria%20de%20tramite" \
+  -H "X-API-Key: cambiar-api-key-segura" \
+  -H "X-Device-ID: equipo-rh-01"
+```
 
-- **Callback URL**: `https://TU_DOMINIO/webhook`
-- **Verify token**: el mismo valor que `VERIFY_TOKEN`
+Cada acceso queda auditado con usuario, dispositivo, IP, horario y resultado.
 
-Suscribí al menos el evento `messages`.
+## Lineamientos ISO (orientativos)
+
+Esta base ayuda a alinear controles técnicos de:
+- **ISO/IEC 27001** (control de acceso, gestión de registros, criptografía),
+- **ISO/IEC 27701** (privacidad sobre datos personales),
+- **ISO 27002** (buenas prácticas operativas).
+
+Para cumplimiento real: definir políticas, segregación de funciones, recertificación de accesos, gestión de incidentes y auditoría externa.
 
 ## Pruebas
 
 ```bash
 pytest
 ```
-
-## Próximos pasos recomendados para IOMA
-
-1. Persistir chats y tickets en PostgreSQL.
-2. Integrar con sistema interno de gestión de trámites.
-3. Añadir panel para operadores (tomar conversación, responder, cerrar caso).
-4. Implementar consentimiento de uso de datos personales antes de capturar DNI.
-5. Configurar métricas (tiempo de primera respuesta, casos por tipo, SLA).
-
-## Corregir alertas de Pylance (`reportMissingImports`)
-
-Si VS Code marca `fastapi` o `fastapi.responses` como no resueltos:
-
-1. Crear y activar el entorno virtual:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-2. Instalar dependencias:
-
-```bash
-pip install -r requirements.txt
-```
-
-3. En VS Code, seleccionar el intérprete `.venv` (Command Palette → `Python: Select Interpreter`).
-
-Este repo incluye `pyrightconfig.json` apuntando a `.venv`, por lo que esas dos alertas desaparecen al usar ese entorno.

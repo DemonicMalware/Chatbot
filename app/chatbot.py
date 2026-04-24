@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 import re
 import uuid
@@ -8,7 +9,8 @@ import uuid
 
 class Step(str, Enum):
     START = "start"
-    ASK_FULL_NAME = "ask_full_name"
+    ASK_FIRST_NAME = "ask_first_name"
+    ASK_LAST_NAME = "ask_last_name"
     ASK_DNI = "ask_dni"
     ASK_MEMBER_ID = "ask_member_id"
     ASK_PROCEDURE = "ask_procedure"
@@ -20,12 +22,15 @@ class Step(str, Enum):
 class ConversationState:
     user_id: str
     step: Step = Step.START
-    full_name: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
     dni: str | None = None
     member_id: str | None = None
     procedure: str | None = None
     details: str | None = None
     ticket_id: str | None = None
+    completed_at: datetime | None = None
+    persisted: bool = False
     messages: list[str] = field(default_factory=list)
 
 
@@ -54,19 +59,26 @@ def next_messages(state: ConversationState, incoming_text: str) -> list[str]:
     state.messages.append(msg)
 
     if state.step == Step.START:
-        state.step = Step.ASK_FULL_NAME
+        state.step = Step.ASK_FIRST_NAME
         return [
             "¡Hola! 👋 Soy el asistente virtual de IOMA (área personal).",
-            "Te voy a hacer unas preguntas para registrar tu consulta o trámite.",
-            "¿Cuál es tu nombre y apellido?",
+            "Esta conversación registra datos para gestionar trámites de manera segura.",
+            "¿Cuál es tu nombre?",
         ]
 
-    if state.step == Step.ASK_FULL_NAME:
-        if len(msg) < 4:
-            return ["Por favor, escribí tu nombre completo para continuar."]
-        state.full_name = msg
+    if state.step == Step.ASK_FIRST_NAME:
+        if len(msg) < 2:
+            return ["Por favor, escribí tu nombre para continuar."]
+        state.first_name = msg
+        state.step = Step.ASK_LAST_NAME
+        return ["Gracias. ¿Cuál es tu apellido?"]
+
+    if state.step == Step.ASK_LAST_NAME:
+        if len(msg) < 2:
+            return ["Por favor, escribí tu apellido para continuar."]
+        state.last_name = msg
         state.step = Step.ASK_DNI
-        return ["Gracias. Ahora indicame tu DNI (solo números)."]
+        return ["Perfecto. Ahora indicame tu DNI (solo números)."]
 
     if state.step == Step.ASK_DNI:
         dni = valid_dni(msg)
@@ -74,7 +86,7 @@ def next_messages(state: ConversationState, incoming_text: str) -> list[str]:
             return ["El DNI no parece válido. Ejemplo: 30111222"]
         state.dni = dni
         state.step = Step.ASK_MEMBER_ID
-        return ["Perfecto. ¿Cuál es tu número de afiliado/a de IOMA?"]
+        return ["¿Cuál es tu número de afiliado/a de IOMA?"]
 
     if state.step == Step.ASK_MEMBER_ID:
         if len(msg) < 4:
@@ -82,9 +94,7 @@ def next_messages(state: ConversationState, incoming_text: str) -> list[str]:
         state.member_id = re.sub(r"\s+", "", msg)
         state.step = Step.ASK_PROCEDURE
         options = "\n".join([f"{k}. {v}" for k, v in PROCEDURES.items()])
-        return [
-            "¿Qué necesitás hacer hoy? Respondé con el número de opción:\n" + options,
-        ]
+        return ["¿Qué necesitás hacer hoy? Respondé con el número de opción:\n" + options]
 
     if state.step == Step.ASK_PROCEDURE:
         key = normalize(msg)
@@ -92,30 +102,33 @@ def next_messages(state: ConversationState, incoming_text: str) -> list[str]:
             return ["No entendí la opción. Respondé con 1, 2, 3, 4 o 5."]
         state.procedure = PROCEDURES[key]
         state.step = Step.ASK_DETAILS
-        return [
-            f"Seleccionaste: {state.procedure}. Contame más detalles para derivarlo al equipo de personal.",
-        ]
+        return [f"Seleccionaste: {state.procedure}. Contame más detalles del trámite."]
 
     if state.step == Step.ASK_DETAILS:
         if len(msg) < 8:
             return ["Necesito un poco más de detalle para poder ayudarte mejor."]
         state.details = msg
         state.ticket_id = f"IOMA-{uuid.uuid4().hex[:8].upper()}"
+        state.completed_at = datetime.now(timezone.utc)
         state.step = Step.DONE
+        state.persisted = False
         return [
             "✅ ¡Listo! Registré tu solicitud.",
-            f"Tu número de gestión es: *{state.ticket_id}*",
-            "Un/a operador/a del área personal te va a responder por este medio.",
+            f"Tu número de trámite es: *{state.ticket_id}*",
+            "Un/a operador/a autorizado/a del área personal te va a responder por este medio.",
         ]
 
-    # DONE
     if normalize(msg) in {"menu", "inicio", "empezar", "nuevo"}:
-        state.step = Step.ASK_FULL_NAME
+        state.step = Step.ASK_FIRST_NAME
+        state.first_name = None
+        state.last_name = None
+        state.dni = None
+        state.member_id = None
         state.procedure = None
         state.details = None
         state.ticket_id = None
-        return ["Perfecto, empezamos de nuevo. ¿Cuál es tu nombre y apellido?"]
+        state.completed_at = None
+        state.persisted = False
+        return ["Perfecto, empezamos de nuevo. ¿Cuál es tu nombre?"]
 
-    return [
-        "Ya tengo tu solicitud registrada. Si querés iniciar una nueva, escribí *MENU*.",
-    ]
+    return ["Ya tengo tu solicitud registrada. Si querés iniciar una nueva, escribí *MENU*."]
